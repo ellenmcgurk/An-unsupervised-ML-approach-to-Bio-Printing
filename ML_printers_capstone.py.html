@@ -1,0 +1,862 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# ## ML Model for 3D Printers
+
+# This model is created based on the capability of PVA-GO materials as inputs for 3D printers.
+# 
+# Firstly, we will explore the dataset and get some metrics that will help us for the further analysis.
+# 
+# Secondly, we will deploy a Machine Learning model to explore the efficiency of PVA-GO as material for 3D printers.
+
+# In[469]:
+
+
+#Import of requiere libraries
+
+# Data handling
+import scipy
+from scipy import stats
+
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import MinMaxScaler
+
+# Visualization
+import seaborn as sns
+
+#import plotly.express as px
+import matplotlib.pyplot as plt
+import mpl_toolkits.mplot3d.axes3d as p3
+from matplotlib import animation
+import matplotlib.patches as mpatches
+
+get_ipython().run_line_magic('matplotlib', 'inline')
+
+# sklearn
+from sklearn.datasets import load_boston, load_breast_cancer, load_iris
+from sklearn.linear_model import LinearRegression, LogisticRegression, Perceptron, Ridge
+from sklearn.metrics import accuracy_score, confusion_matrix, mean_squared_error
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.preprocessing import PolynomialFeatures
+
+# Clustering
+from sklearn.cluster import KMeans, DBSCAN
+from sklearn import preprocessing
+from sklearn.metrics import silhouette_score
+
+# Dimensionality reduction
+from sklearn.manifold import TSNE
+from sklearn.decomposition import PCA
+
+
+# #### 1. Data Upload 
+
+# In[470]:
+
+
+#Upload the Dataset
+
+data = pd.read_csv("Factorial_study_data.csv") 
+
+
+# In[471]:
+
+
+data.shape
+
+
+# In[472]:
+
+
+data.dtypes
+
+
+# We change the type of data for the headers of the different combinations of experiments. Since the combinations of experiments are labels related to acknowledge them, if we keep them as 'int' the model will assume that they are results of the experiment instead of a description.
+
+# In[473]:
+
+
+to_string = ['Layer #', 'Scaffold #', 'wt% PPF', 'Spacing (mm)', 'Speed (mm/s)', 'Pressure (bar)']
+
+data[to_string] = data[to_string].astype(object)
+
+data.dtypes[:10]
+
+
+# In[474]:
+
+
+# Drop the Label column, since it has the same information as the other ones.
+
+data = data.drop(['Label'], axis=1)
+
+
+# In[475]:
+
+
+data = data.rename(columns={'Layer #':'Layer', 'Scaffold #':'Scaffold', 'wt% PPF':'Material'})
+data.columns
+
+
+# #### 2 Data Processing
+
+# Split the dataset according to each material for analysis of NaN
+
+# ##### 2.1. Material composition 85
+
+# In[476]:
+
+
+#Material Composition --> 85
+
+data_85 = data[data['Material']==85]
+data_85.shape
+
+
+# In[477]:
+
+
+#Missing Values analysis
+
+missing_values_85 = data_85.isnull().sum()
+missing_values_85[missing_values_85>0]
+
+
+# In[478]:
+
+
+len(data_85.dropna())/len(data_85)
+
+
+# In[479]:
+
+
+#If we delete all the null data in fiber spacing are we deleting everything?
+
+_data_85_no_nulls = data_85.dropna(subset=['Mean pore'])
+
+len(_data_85_no_nulls)/len(data_85)
+
+
+# In[480]:
+
+
+print('We have', data_85.shape[0] - _data_85_no_nulls.shape[0], 'empty rows that are explaines by the Mean Pore metric')
+
+
+# We got the 92,5% of our null values explained by the variable 'Mean Pore'. Since the rest of the null values explained by this one, we will explore which combination generates no data.
+
+# In[481]:
+
+
+data_85[data_85['Mean pore'].isnull()].describe(include='all')
+
+
+# We can observe that there are 4 uniques counts for 'Speed' and we only have 3 possible combinations. We have to analyse this deeper incsse we have a combination in the dataset that is not used in the paper. The possible combinations are: 5, 7.5 and 10 mm/s. 
+# 
+# From this we saw that the top value for speed is 20 and is not a possible combination.We will further explore this 
+
+# In[482]:
+
+
+nulls_speed_20 = data_85[(data_85['Speed (mm/s)'] == 20) & (data_85['Mean pore'].isnull())]
+
+
+# Almost half of our null values are explained by this combination with speed equal to 20. Also, we can observe that we have more possible combinations than the ones described in the paper. 
+# 
+# We can delete this empty rows, since it is a combination that is not investigated from the beginning and we dont have results in the rest of the metrics.
+
+# In[483]:
+
+
+new_data_85 = data_85.drop(data_85[(data_85['Speed (mm/s)'] == 20) & (data_85['Mean pore'].isnull())].index)
+new_data_85.shape
+
+
+# In[484]:
+
+
+len(new_data_85.dropna())/len(new_data_85)
+
+
+# We got rid off the 4% of the null values wit the 85 material component. We now have to discover where the 8% of missing values come from.
+
+# In[485]:
+
+
+new_data_85[new_data_85['Mean pore'].isnull()].describe(include='all')
+
+
+# Since the rest of null data in the variable 'Maen Pore' are distribuited over the different possible combinations, we get rid off them because they are not useful for our model and would impact it negatively
+
+# In[486]:
+
+
+new_85 = new_data_85.drop(new_data_85[new_data_85['Mean pore'].isnull()].index)
+
+
+# In[487]:
+
+
+len(new_85.dropna())/len(new_85)
+
+
+# We still have a 5% of null values in our subset dataset with material composition of 85.
+
+# In[488]:
+
+
+new_missing_85 = new_85.isnull().sum()
+new_missing_85[new_missing_85>0]
+
+
+# The rest of the missing values are concentrated in the same variables. We have to discover if the are distribuited over the same records.
+
+# In[489]:
+
+
+new_85[new_85['Mean fiber'].isnull()].describe(include='all')
+
+
+# The missing values on the variable 'Mean Fiber' seems to be concentrated in the combination of 0.8 spacing (mm)
+
+# In[490]:
+
+
+nulls_spacing_8 = new_85[(new_85['Spacing (mm)'] == 0.8) & (new_85['Mean fiber'].isnull())]
+
+nulls_spacing_8.shape
+
+
+# We delete all the empty rows under the conditions of spacing described before.
+
+# In[491]:
+
+
+material_85 = new_85.drop(new_85[(new_85['Spacing (mm)'] == 0.8) & (new_85['Mean fiber'].isnull())].index)
+material_85.shape
+
+
+# In[492]:
+
+
+len(material_85)/len(data_85.dropna())
+
+
+# Following this methodwe checked that we got rid off all the null values and we are not compromising the ability of the data to be used in building the model.
+
+# ##### 2.2. Material composition 90
+
+# In[493]:
+
+
+#Material Composition --> 90
+
+data_90 = data[data['Material']==90]
+data_90.shape
+
+
+# In[494]:
+
+
+len(data_90.dropna())/len(data_90)
+
+
+# In[495]:
+
+
+print('In summary, we have', len(data_90) - len(data_90.dropna()), 'empty rows')
+
+
+# In the composition material 90 we have the 25% of the values that are nulls.
+
+# In[496]:
+
+
+missing_90 = data_90.isnull().sum()
+missing_90[missing_90>0]
+
+
+# We can check if the 175 missing rows contemplated in the variable 'Mean Spacing'also explain the missing values in the rest of ths subset material 90.
+
+# In[497]:
+
+
+data_90[data_90['Mean fiber'].isnull()].describe(include='all')
+
+
+# We can observe 7 different types of combinations for 'Spacing (mm)' that explain the missing values in the composition material 90. Since in the paper we only have 3 possible combinations.
+
+# In[498]:
+
+
+material_90 = data_90.drop(data_90[data_90['Mean spacing'].isnull()].index)
+material_90.shape
+
+
+# In[499]:
+
+
+len(material_90)/len(data_90.dropna())
+
+
+# As mentioned in the paper, additional speed were tested for material composition 85 and additional spacings were considered for material composition 90. Not all combinations of processing parameters were printable. Thus this reinforces the methodology of deleting the empty rows for additional combinations.
+
+# ##### 2.3. Unification Dataset
+
+# In[500]:
+
+
+df = material_85.append(material_90)
+print('The percent of eliminated rows represents the', 1 - (len(df)/len(data)), 'of the original dataset and also were equivalent to', data.shape[0] - df.shape[0], 'rows')
+
+
+# In[501]:
+
+
+print('the new dimension of the dataset is {0}'.format(df.shape))
+
+
+# ##### 2.4. Creation of AUX variables
+
+# In this part of the process, we create our target variable 'Machine Precision (%)' and we add the 'Viscosity' variable. 
+# 
+# Material accuracy was not investigated as we do not have the data once cleaned. 
+
+# In[502]:
+
+
+#Material Precision
+
+df["Spacing (mm)"] = df["Spacing (mm)"].astype(float)
+
+df['Material_precision'] = (df["Spacing (mm)"] - df["Mean spacing"])*100/df["Spacing (mm)"]
+
+
+# In[503]:
+
+
+# Viscosity
+
+df['Viscosity'] = np.where(df['Material'] == 85, 45., 66.)
+df.head()
+
+
+# In[504]:
+
+
+# Final Structure. We just keep the possible cominationsand the target variable.
+
+df = df[['Layer', 'Spacing (mm)', 'Speed (mm/s)', 'Pressure (bar)', 'Viscosity', 'Material_precision']]
+
+df_1 = df.rename(columns={'Spacing (mm)':'Spacing', 'Speed (mm/s)':'Speed', 'Pressure (bar)':'Pressure'})
+df_1.columns
+
+
+# In[505]:
+
+
+df_1.dtypes
+
+
+# In[506]:
+
+
+_obj = ['Layer', 'Speed', 'Pressure']
+
+df_1[_obj] = df_1[_obj].astype(float)
+
+
+# In[507]:
+
+
+def plot_corr(df_1):
+    corr = df_1.corr()
+    mask = np.zeros_like(corr, dtype=np.bool)
+    mask[np.triu_indices_from(mask)] = True
+    f, ax = plt.subplots(figsize=(8, 9))
+    cmap = sns.diverging_palette(220, 10, as_cmap=True)
+    sns.heatmap(corr, mask=mask, cmap=cmap, vmax=.3, center=0,
+                square=True, linewidths=0.5, cbar_kws={"shrink": .5})
+
+plot_corr(df_1)
+
+
+# We can observe a correlation between 'Viscosity' and 'Pressure'. Also, our target variable ('Material_precision') has a positive correlation with all the explanatory variables, with the exception of 'Speed' that presents a soft negative correlation. 
+
+# In[508]:
+
+
+#We drop our target variable
+
+df_X = df_1.drop('Material_precision', axis=1)
+
+
+# Finally the scatter plots and box plots were generated to help interpret the validity of our results used later 
+# 
+
+# In[509]:
+
+
+
+#scatter plot 
+var = 'Speed'
+data = pd.concat([df_1['Material_precision'], df_1[var]], axis = 1)
+data.plot.scatter(x = var, y = 'Material_precision', ylim=(-30, 22))
+                                        
+#- seem to be linerarly related
+
+var = 'Speed'
+data = pd.concat([df_1['Material_precision'], df_1[var]], axis=1)
+f, ax = plt.subplots(figsize=(6, 6))
+fig = sns.boxplot(x=var, y="Material_precision", data=data)
+fig.axis(ymin=0, ymax=22)
+
+
+var = 'Pressure'
+data = pd.concat([df_1['Material_precision'], df_1[var]], axis = 1)
+data.plot.scatter(x = var, y = 'Material_precision', ylim=(-30, 25))
+                                        
+#- seem to be linerarly related
+
+var = 'Pressure'
+data = pd.concat([df_1['Material_precision'], df_1[var]], axis=1)
+f, ax = plt.subplots(figsize=(8, 6))
+fig = sns.boxplot(x=var, y="Material_precision", data=data)
+fig.axis(ymin=-30, ymax=25)
+
+
+var = 'Viscosity'
+data = pd.concat([df_1['Material_precision'], df_1[var]], axis = 1)
+data.plot.scatter(x = var, y = 'Material_precision', ylim=(-30, 25))
+                                        
+#- seem to be linerarly related
+
+var = 'Viscosity'
+data = pd.concat([df_1['Material_precision'], df_1[var]], axis=1)
+f, ax = plt.subplots(figsize=(8, 6))
+fig = sns.boxplot(x=var, y="Material_precision", data=data)
+fig.axis(ymin=-30, ymax=40)
+
+
+
+var = 'Layer'
+data = pd.concat([df_1['Material_precision'], df_1[var]], axis = 1)
+data.plot.scatter(x = var, y = 'Material_precision', ylim=(-30, 25))
+                                        
+#- seem to be linerarly related
+
+var = 'Layer'
+data = pd.concat([df_1['Material_precision'], df_1[var]], axis=1)
+f, ax = plt.subplots(figsize=(6, 4))
+fig = sns.boxplot(x=var, y="Material_precision", data=data)
+fig.axis(ymin=-30, ymax=40)
+
+
+
+var = 'Spacing'
+data = pd.concat([df_1['Material_precision'], df_1[var]], axis = 1)
+data.plot.scatter(x = var, y = 'Material_precision', ylim=(-30, 25))
+                                        
+#- seem to be linerarly related
+
+var = 'Spacing'
+data = pd.concat([df_1['Material_precision'], df_1[var]], axis=1)
+f, ax = plt.subplots(figsize=(6, 6))
+fig = sns.boxplot(x=var, y="Material_precision", data=data)
+fig.axis(ymin=-30, ymax=25)
+
+
+# #### 3 Clustering Methods
+
+# The design of the model answer the following question: which combinations of the initial parameters suits for better results in terms of material precision?
+# 
+# In other words, we will build a ML Unsupervised model that classifies the initial parameters in different groups, where each group is associated with different possible results ('Low' or 'High' performances).
+
+# Firstly, we need to focus on the number os possible groups associated with the initial parameters. We will analyse the performance of three different techniques for clusters problems.
+# 
+# Secondly, we will implement an evaluation of the results, choosing the most appropiate algorithm.
+# 
+# Finally, we will study the initial combinations in each group and we will try to interpret which results are associated with each possible result in term of 'Material_precision' ('Low' or 'High' performance).
+# 
+# By this way, we would are able to determinate which combinations of the initial parameters have an effect in changing 'Material_precision'.
+
+# ##### 3.1. K-Means
+
+# Firslty, we have to define the number of clusters
+
+# In[510]:
+
+
+kmeans3=KMeans(n_clusters=4).fit(df_X)
+print(kmeans)
+print('Sum of the least squares of distances to the cluster / Inertia: ', kmeans3.inertia_)
+
+
+# Elbow method to get the number of potential clusters.
+
+# In[511]:
+
+
+# n_clusters de 2 a 9
+scores = [KMeans(n_clusters=i+2).fit(df_X).inertia_ for i in range(10)]
+plt.plot(np.arange(2, 12), scores)
+plt.xlabel('Number of clusters')
+plt.ylabel("Inertia")
+plt.title("Inertia of k-Means versus number of clusters")
+
+
+# We can observe that the number of clusters that better fit our model is 4.
+
+# In[512]:
+
+
+kmeans = KMeans(n_clusters=4)
+kmeans.fit(df_X)
+kmeans.get_params()
+
+
+# ##### 3.2. K-Means Normalized
+
+# The second method introduced is K-Means normalized. This method consists in normalizing the distance of each row of the dataset.
+
+# In[513]:
+
+
+normalized_vectors = preprocessing.normalize(df_X)
+scores = [KMeans(n_clusters=i+2).fit(normalized_vectors).inertia_ for i in range(10)]
+plt.plot(np.arange(2, 12), scores)
+plt.xlabel('Number of clusters')
+plt.ylabel("Inertia")
+plt.title("Inertia of Cosine k-Means versus number of clusters")
+
+
+# The number of clusters is an Hyperparameter in the Kmeans technique. One way to determinate the number of possible clusters is the 'Elbow' method, where you set the fit model and the inertia you get increasing the number of clusters. By the way, in both cases we observe that at 4 we get a disminishing return. 
+
+# In[514]:
+
+
+normalized_kmeans = KMeans(n_clusters=4)
+normalized_kmeans.fit(normalized_vectors)
+normalized_kmeans.get_params()
+
+
+# In[515]:
+
+
+print('Sum of the least squares of distances to the cluster / Inertia: ', normalized_kmeans.inertia_)
+
+
+# ##### 3.3. DBSCAN 
+
+# The last method used is DBSCAN. In this method, the number of potential cluster is an output.
+
+# In[516]:
+
+
+min_samples = df_X.shape[1]+1 #  Rule of thumb; number of dimensions D in the data set, as minPts ≥ D + 1
+dbscan = DBSCAN(eps=3.5, min_samples=min_samples).fit(df_X)
+
+
+# In[517]:
+
+
+dbscan.get_params()
+
+
+# By the rule of the thumb, since we have 5 variables, we set the hyperparameter 'min_samples' to 6.
+
+# #### 4. Evaluation 
+
+# ##### 4.1. Number of elements in each cluster 
+
+# In[518]:
+
+
+from collections import Counter
+print('Number of data in each cluster with kmeans: ',Counter(kmeans.labels_))
+print('Number of data in each cluster with cosine distribution: ',Counter(normalized_kmeans.labels_))
+print('Number of data in each cluster with DBSCAN: ',Counter(dbscan.labels_))
+
+
+# In[519]:
+
+
+k_medias = Counter(kmeans.labels_)
+
+k_medias = pd.DataFrame.from_dict(k_medias, orient='index').reset_index().rename(columns={0:'K Means'})
+
+
+# In[520]:
+
+
+normalized = Counter(normalized_kmeans.labels_)
+
+normalized = pd.DataFrame.from_dict(normalized, orient='index').reset_index().rename(columns={0:'K-Means Normalised'})
+
+
+# In[521]:
+
+
+dbscan_1 = Counter(dbscan.labels_)
+
+dbscan_1 = pd.DataFrame.from_dict(dbscan_1, orient='index').reset_index().rename(columns={0:'DBSCAN'})
+
+
+# In[522]:
+
+
+result = k_medias.join(normalized.set_index('index'), on='index')
+result.join(dbscan_1.set_index('index'), on='index').sort_values(by=['index'], axis=0, ascending=True)
+
+
+# In this chart we can observe the number of initial possible combinations aggrupated in each cluster. 
+# 
+# In other words, we can see how the different techniques classified each row in the different possible clusters.
+
+# ##### 4.2. Silhouette
+
+# In[523]:
+
+
+print('kmeans: {}'.format(silhouette_score(df, kmeans.labels_, metric='euclidean')))
+print('Normalized (cosine) kmeans: {}'.format(silhouette_score(normalized_vectors, normalized_kmeans.labels_, metric='cosine')))
+print('DBSCAN: {}'.format(silhouette_score(df, dbscan.labels_, metric='cosine')))
+
+
+# Silhouette is a formal socre that measures the separability between clusters. In this case, the Normalized Kmeans perfoms better results than the other techniques, since the distances between clusters is bigger.
+
+# #### 5. Visualization
+
+# For visualisation of the clusters, we will reduce the dimensionality of our original dataset and graph the distribution of the labels.
+
+# We will implement a PCA method to reduce the dimensionality of our original dataset
+
+# In[524]:
+
+
+def prepare_pca(n_components, data):
+    names = ['x', 'y', 'z']
+    matrix = PCA(n_components=n_components).fit_transform(data)
+    df_matrix = pd.DataFrame(matrix)
+    df_matrix.rename({i:names[i] for i in range(n_components)}, axis=1, inplace=True)
+        
+    return df_matrix
+
+
+# In[525]:
+
+
+#df_graph = 
+
+
+# In[526]:
+
+
+#df_X.columns
+
+
+# In[527]:
+
+
+"""
+colours=['purple','blue','orange','red']
+
+df_X['kmedias']=kmeans.labels_
+df_X['kmedias_norm']=normalized_kmeans.labels_
+df_X['dbscan']=dbscan.labels_
+
+
+f1 = df_X.kmedias
+f2 = df_X.kmedias_norm
+f3 = df_X.dbscan
+
+"""
+
+
+# In[528]:
+
+
+"""
+k_means_values = np.where(f1 == 0, colours[0], np.where(f1 == 1, colours[1], np.where(f1 == 2, colours[2], colours[3])))
+
+k_means_norm_values = np.where(f2 == 0, colours[0], np.where(f2 == 1, colours[1], np.where(f2 == 2, colours[2], colours[3])))
+
+dbscan_values = np.where(f3 == 0, colours[0], np.where(f3 == 1, colours[1], np.where(f3 == 2, colours[2], colours[3])))
+"""
+
+
+# In[ ]:
+
+
+
+
+
+# In[529]:
+
+
+pca_df = prepare_pca(3, df_X)
+
+
+
+fig, axs = plt.subplots(nrows=2, ncols=2, sharex=True)
+fig.set_figheight(12)
+fig.set_figwidth(18)
+
+axs[0,0].scatter(x=pca_df.x, y=pca_df.y,c=k_means_values,  s=2)
+axs[0,0].set_title('K-means PCA')
+axs[0,0].set_xlabel('Component 1')
+axs[0,0].set_ylabel('Component 2')
+
+
+axs[0,1].scatter(x=pca_df.x, y=pca_df.y,c=k_means_norm_values,  s=2)
+axs[0,1].set_title('Normalised K-means PCA')
+axs[0,1].set_xlabel('Component 1')
+axs[0,1].set_ylabel('Component 2')
+
+
+axs[1,0].scatter(x=pca_df.x, y=pca_df.y,c=dbscan_values, s=2)
+axs[1,0].set_title('DBSCAN PCA')
+axs[1,0].set_xlabel('Component 1')
+axs[1,0].set_ylabel('Component 2')
+
+"""
+
+patch1 = mpatches.Patch(color=colours[0], label='cluster0')
+patch2 = mpatches.Patch(color=colours[1], label='cluster1')
+patch3 = mpatches.Patch(color=colours[2], label='cluster2')
+patch4 = mpatches.Patch(color=colours[3], label='cluster3')
+plt.legend(handles=[patch1,patch2,patch3,patch4], loc=0)
+
+"""
+plt.show()
+
+
+# In[530]:
+
+
+pca_df['Segment K-means PCA']=kmeans.labels_
+pca_df['Segment'] = pca_df['Segment K-means PCA'].map({0:'first', 1:'second', 2:'third', 3:'fourth'})
+
+#fig, axs = plt.subplots(nrows=2, ncols=2, sharex=True)
+#fig.set_figheight(12)
+#fig.set_figwidth(18)
+#axs[0,0].scatter(x=pca_df.x, y=pca_df.y,c=kmeans.labels_, label=kmeans.labels_, s=2)
+#x_axis = axs[0,0].set_xlabel('Component 1')
+#y_axis = axs[0,0].set_ylabel('Component 2')
+
+#(x_axis, y_axis, hue = pca_df['Segment'], palette = ['g', 'r', 'c', 'm'])
+#plt.show
+pca_df.head()
+
+
+# In[531]:
+
+
+from mpl_toolkits.mplot3d import Axes3D
+
+target=k_means_norm_values
+fig = plt.figure()
+ax = Axes3D(fig)
+ax.scatter(pca_df.x, pca_df.y, pca_df.z,c=target,label=target, s=2)
+ax.set_xlabel('Component 1')
+ax.set_ylabel('Component 2')
+ax.set_zlabel('Component 3')
+plt.title('Normalised k-means PCA with 3 dimensions')
+plt.legend(handles=[patch1,patch2,patch3,patch4], loc=0)
+plt.show()
+
+
+# #### 6. Feature Importance
+
+# Once that we have segmented our initial parameters, we would like to analyse what makes each cluster unique. This will help us to understand which initial combinations fit better.
+
+# In[532]:
+
+
+scaler = MinMaxScaler()
+df_scaled = pd.DataFrame(scaler.fit_transform(df_X))
+df_scaled.columns = df_X.columns
+df_scaled['normalized_kmeans'] = normalized_kmeans.labels_
+
+
+# For this purpose, we will plot the variables we have an interpret the results we have in each clusters by 2 approaches.
+
+# ##### 6.2. Variance Approach 
+
+# In[533]:
+
+
+df_mean = df_scaled.loc[df_scaled.normalized_kmeans!=-1, :].groupby('normalized_kmeans').mean().reset_index()
+df_mean
+
+
+# Normalised the initial combinations, to avoid outliers numbers, and plot them by each cluster.
+
+# In[534]:
+
+
+pal = sns.color_palette("Paired")
+print(pal.as_hex())
+
+
+# In[535]:
+
+
+# Setting all variables between 0 and 1 in order to better visualize the results
+
+colors = {'Viscosity': "#a6cee3", 'Speed': "#1f78b4", 'Pressure': "#b2df8a", 'Layer': '#33a02c', 'Spacing':'#fb9a99' }
+
+scaler = MinMaxScaler()
+df_scaled = pd.DataFrame(scaler.fit_transform(df_X))
+df_scaled.columns = df_X.columns
+df_scaled['normalized_kmeans'] = normalized_kmeans.labels_
+
+# Calculate variables with largest differences (by standard deviation)
+# The higher the standard deviation in a variable based on average values for each cluster
+# The more likely that the variable is important when creating the cluster
+df_mean = df_scaled.loc[df_scaled.normalized_kmeans!=-1, :].groupby('normalized_kmeans').mean().reset_index()
+results = pd.DataFrame(columns=['Variable', 'Std'])
+for column in df_mean.columns[1:]:
+    results.loc[len(results), :] = [column, np.std(df_mean[column])]
+selected_columns = list(results.sort_values('Std', ascending=False).head(7).Variable.values) + ['normalized_kmeans']
+
+# Plot data
+tidy = df_scaled[selected_columns].melt(id_vars='normalized_kmeans')
+fig, ax = plt.subplots(figsize=(15, 5))
+sns.barplot(x='normalized_kmeans', y='value', hue='variable', data=tidy, palette=colors)
+plt.legend(loc='upper right')
+plt.savefig("normalized_kmeans_results.jpg", dpi=300)
+
+
+# ##### 6.2. Random Forest Approach 
+
+# Finally, we use the clusters as a target variable and then apply Random forest to understand which features are important in the generation of the clusters. 
+
+# In[536]:
+
+
+from sklearn.ensemble import RandomForestClassifier
+y = normalized_kmeans.labels_
+X = df_X#.iloc[:,:]
+clf = RandomForestClassifier(n_estimators=100).fit(X, y)
+selected_columns = list(pd.DataFrame(np.array([clf.feature_importances_, df_X.columns]).T, columns=['Importance', 'Feature'])
+           .sort_values("Importance", ascending=False)
+           .head(7)
+           .Feature
+           .values)
+
+
+# In[537]:
+
+
+# Plot data
+tidy = df_scaled[selected_columns+['normalized_kmeans']].melt(id_vars='normalized_kmeans')
+fig, ax = plt.subplots(figsize=(15, 5))
+sns.barplot(x='normalized_kmeans', y='value', hue='variable', data=tidy, palette=colors)
+plt.legend(loc='upper right')
+plt.savefig('randomforest.jpg', dpi=300)
+
+
+# We got similar result with both approaches. By this way, we can clearly analyse suitable combinations of each initial parameters to get the best performance of 'Material_precision. 
